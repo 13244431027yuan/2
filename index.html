@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>MD 解析器</title>
+    <!-- 样式：GitHub 风格 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown.min.css">
+    <style>
+        body { display: flex; height: 100vh; margin: 0; }
+        textarea, .preview { width: 50%; height: 100%; border: none; padding: 20px; box-sizing: border-box; }
+        textarea { border-right: 1px solid #ddd; resize: none; outline: none; }
+        .preview { overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <textarea id="input" placeholder="输入 Markdown..."># Hello World</textarea>
+    <div id="output" class="markdown-body preview"></div>
+
+    <!-- 解析库：marked -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- 代码高亮：highlight.js -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+
+    <script>
+        const input = document.getElementById('input');
+        const output = document.getElementById('output');
+
+        const render = () => {
+            output.innerHTML = marked.parse(input.value);
+            // 触发代码高亮
+            document.querySelectorAll('pre code').forEach((block) => {
+                hljs.highlightElement(block);
+            });
+        };
+
+        input.addEventListener('input', render);
+        render(); // 初始化
+    </script>
+</body>
+</html>
