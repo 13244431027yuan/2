@@ -2,40 +2,320 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>MD 解析器</title>
-    <!-- 样式：GitHub 风格 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown 解析器</title>
+    <!-- GitHub 样式 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown.min.css">
+    <!-- 代码高亮样式 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github-dark.min.css">
+    <!-- KaTeX 数学公式样式 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
     <style>
-        body { display: flex; height: 100vh; margin: 0; }
-        textarea, .preview { width: 50%; height: 100%; border: none; padding: 20px; box-sizing: border-box; }
-        textarea { border-right: 1px solid #ddd; resize: none; outline: none; }
+        * { box-sizing: border-box; }
+        body { display: flex; flex-direction: column; height: 100vh; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; transition: background 0.3s, color 0.3s; }
+        .toolbar { padding: 10px 15px; background: #f6f8fa; border-bottom: 1px solid #d0d7de; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .container { display: flex; flex: 1; overflow: hidden; }
+        textarea, .preview { width: 50%; height: 100%; border: none; padding: 16px 24px; outline: none; font-size: 14px; line-height: 1.6; }
+        textarea { border-right: 1px solid #d0d7de; resize: none; font-family: ui-monospace, SFMono-Regular, monospace; }
         .preview { overflow-y: auto; }
+        .markdown-body { font-size: 16px; }
+        .mermaid { text-align: center; margin: 1em 0; }
+        .loading { padding: 20px; color: #57606a; }
+        .error { padding: 20px; color: #cf222e; background: #ffebe9; border-radius: 6px; margin: 10px; }
+        button { cursor: pointer; padding: 6px 12px; border: 1px solid #d0d7de; border-radius: 6px; background: #f6f8fa; font-size: 13px; transition: all 0.2s; }
+        button:hover { background: #eaeef2; border-color: #8c959f; }
+        input[type="file"] { display: none; }
+        .url-input { flex: 1; min-width: 200px; padding: 6px 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px; }
+        /* 暗黑模式 */
+        body.dark { background: #0d1117; color: #c9d1d9; }
+        body.dark .toolbar { background: #161b22; border-color: #30363d; }
+        body.dark textarea { background: #0d1117; color: #c9d1d9; border-color: #30363d; }
+        body.dark .preview { background: #0d1117; color: #c9d1d9; }
+        body.dark .url-input { background: #0d1117; color: #c9d1d9; border-color: #30363d; }
+        body.dark button { background: #21262d; border-color: #30363d; color: #c9d1d9; }
+        body.dark button:hover { background: #30363d; }
+        @media (max-width: 768px) {
+            .container { flex-direction: column; }
+            textarea, .preview { width: 100%; height: 50%; }
+            textarea { border-right: none; border-bottom: 1px solid #d0d7de; }
+        }
     </style>
 </head>
 <body>
-    <textarea id="input" placeholder="输入 Markdown..."># Hello World</textarea>
-    <div id="output" class="markdown-body preview"></div>
+    <div class="toolbar">
+        <button onclick="document.getElementById('fileInput').click()">📂 上传</button>
+        <input type="file" id="fileInput" accept=".md,.markdown,.txt">
+        <input type="text" id="urlInput" class="url-input" placeholder="或输入远程 URL...">
+        <button onclick="loadFromInput()">🔗 加载</button>
+        <button onclick="exportHTML()">💾 导出</button>
+        <button onclick="toggleTheme()">🌙 主题</button>
+        <button onclick="copyLink()">🔗 分享</button>
+    </div>
+    <div class="container">
+        <textarea id="input" placeholder="# 开始编写 Markdown..."></textarea>
+        <div id="output" class="markdown-body preview"></div>
+    </div>
 
-    <!-- 解析库：marked -->
+    <!-- 核心库 -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <!-- 代码高亮：highlight.js -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.1/purify.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <!-- 扩展库 -->
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/contrib/auto-render.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.2.4/dist/mermaid.min.js"></script>
 
     <script>
+        // DOM 元素
         const input = document.getElementById('input');
         const output = document.getElementById('output');
+        const urlInput = document.getElementById('urlInput');
+        const fileInput = document.getElementById('fileInput');
 
-        const render = () => {
-            output.innerHTML = marked.parse(input.value);
-            // 触发代码高亮
-            document.querySelectorAll('pre code').forEach((block) => {
-                hljs.highlightElement(block);
-            });
+        // 初始化 Mermaid
+        mermaid.initialize({ 
+            startOnLoad: false, 
+            theme: document.body.classList.contains('dark') ? 'dark' : 'default',
+            securityLevel: 'loose'
+        });
+
+        // ==================== 核心渲染函数 ====================
+        const render = async () => {
+            try {
+                // 1. Markdown → HTML
+                const rawHtml = marked.parse(input.value);
+                
+                // 2. 安全清洗 (防 XSS)
+                const cleanHtml = DOMPurify.sanitize(rawHtml);
+                output.innerHTML = cleanHtml;
+
+                // 3. 代码高亮
+                output.querySelectorAll('pre code').forEach((block) => {
+                    hljs.highlightElement(block);
+                });
+
+                // 4. 数学公式 (KaTeX)
+                renderMathInElement(output, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: true },
+                        { left: '$', right: '$', display: false },
+                        { left: '\\(', right: '\\)', display: false },
+                        { left: '\\[', right: '\\]', display: true }
+                    ],
+                    throwOnError: false
+                });
+
+                // 5. 流程图/图表 (Mermaid)
+                await renderMermaid();
+
+            } catch (err) {
+                console.error('Render error:', err);
+                output.innerHTML = `<div class="error">❌ 渲染错误: ${err.message}</div>`;
+            }
         };
 
+        // 渲染 Mermaid 图表
+        const renderMermaid = async () => {
+            const mermaidBlocks = output.querySelectorAll('code.language-mermaid, div.mermaid');
+            for (let i = 0; i < mermaidBlocks.length; i++) {
+                const block = mermaidBlocks[i];
+                const code = block.textContent.trim();
+                if (!code) continue;
+                
+                try {
+                    const container = document.createElement('div');
+                    container.className = 'mermaid';
+                    const { svg } = await mermaid.render(`mermaid-${Date.now()}-${i}`, code);
+                    container.innerHTML = svg;
+                    block.replaceWith(container);
+                } catch (e) {
+                    console.warn('Mermaid render failed:', e);
+                    block.innerHTML = `<pre><code class="language-mermaid">${code}</code></pre>`;
+                }
+            }
+        };
+
+        // ==================== 远程加载功能 ====================
+        async function loadRemoteMD(url) {
+            if (!url) return;
+            
+            output.innerHTML = '<div class="loading">🔄 加载中...</div>';
+            
+            try {
+                // 自动转换 GitHub 链接
+                const rawUrl = convertToRaw(url);
+                
+                const res = await fetch(rawUrl);
+                if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                
+                const mdText = await res.text();
+                input.value = mdText;
+                await render();
+                
+                // 更新 URL 参数 (不刷新页面)
+                updateURLParam(rawUrl);
+                
+            } catch (err) {
+                output.innerHTML = `
+                    <div class="error">
+                        ❌ 加载失败: ${err.message}<br><br>
+                        <small>
+                        • 检查 URL 是否正确<br>
+                        • 目标文件需支持 CORS 跨域<br>
+                        • GitHub 私有仓库需 Token 认证
+                        </small>
+                    </div>`;
+                console.error('Load error:', err);
+            }
+        }
+
+        // GitHub 链接转换: blob → raw
+        function convertToRaw(url) {
+            return url
+                .trim()
+                .replace(/^https?:\/\/github\.com\//, 'https://raw.githubusercontent.com/')
+                .replace(/\/blob\/([^/]+\/[^/]+\/)/, '/$1')
+                .replace(/\/tree\//, '/');
+        }
+
+        // 更新浏览器 URL 参数
+        function updateURLParam(url) {
+            const newURL = new URL(window.location);
+            newURL.searchParams.set('URL', url);
+            window.history.replaceState({}, '', newURL);
+        }
+
+        // 从输入框加载
+        function loadFromInput() {
+            const url = urlInput.value.trim();
+            if (url) loadRemoteMD(url);
+        }
+
+        // ==================== 文件上传 ====================
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                input.value = evt.target.result;
+                render();
+            };
+            reader.readAsText(file);
+            e.target.value = ''; // 重置，允许重复选择同一文件
+        });
+
+        // ==================== URL 参数解析 ====================
+        function initFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            const remoteURL = params.get('URL');
+            
+            if (remoteURL) {
+                urlInput.value = decodeURIComponent(remoteURL);
+                loadRemoteMD(decodeURIComponent(remoteURL));
+            } else {
+                // 默认示例内容
+                input.value = `# 🎉 Markdown 解析器
+
+> 支持 **GFM**、数学公式、流程图、代码高亮
+
+## ✨ 功能
+- [x] 本地实时编辑
+- [x] 远程 URL 加载 \`?URL=...\`
+- [x] 文件上传 (.md/.txt)
+- [x] 代码高亮 + LaTeX + Mermaid
+- [x] 暗黑模式 + HTML 导出
+
+## 📊 Mermaid 示例
+\`\`\`mermaid
+graph LR
+    A[Markdown] --> B(marked)
+    B --> C{DOMPurify}
+    C -->|Safe| D[Preview]
+\`\`\`
+
+## 🧮 数学公式
+行内: $E = mc^2$
+
+块级:
+$$
+\\sum_{i=1}^{n} x_i = \\frac{n(n+1)}{2}
+$$
+
+## 💡 提示
+添加 \`?URL=...\` 参数可加载远程文件:
+\`\`\`
+https://xx.github.io/?URL=https://raw.githubusercontent.com/...
+\`\`\`
+`;
+                render();
+            }
+        }
+
+        // ==================== 工具函数 ====================
+        // 导出为 HTML
+        function exportHTML() {
+            const content = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<title>Exported Markdown</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github-dark.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>body{padding:20px;max-width:900px;margin:0 auto}.markdown-body{font-size:16px}</style>
+</head><body><article class="markdown-body">${output.innerHTML}</article>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/contrib/auto-render.min.js"><\/script>
+<script>
+  document.querySelectorAll('pre code').forEach(b=>hljs.highlightElement(b));
+  renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});
+<\/script>
+</body></html>`;
+            
+            const blob = new Blob([content], { type: 'text/html' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `markdown-${Date.now()}.html`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+        }
+
+        // 切换暗黑模式
+        function toggleTheme() {
+            document.body.classList.toggle('dark');
+            // 重新渲染 Mermaid 以应用新主题
+            if (document.body.classList.contains('dark')) {
+                mermaid.initialize({ theme: 'dark', startOnLoad: false });
+            } else {
+                mermaid.initialize({ theme: 'default', startOnLoad: false });
+            }
+            render();
+        }
+
+        // 复制分享链接
+        function copyLink() {
+            const url = new URL(window.location);
+            const mdURL = urlInput.value.trim();
+            if (mdURL) {
+                url.searchParams.set('URL', encodeURIComponent(mdURL));
+            }
+            navigator.clipboard.writeText(url.toString()).then(() => {
+                alert('🔗 链接已复制到剪贴板');
+            }).catch(() => {
+                prompt('复制链接:', url.toString());
+            });
+        }
+
+        // ==================== 事件绑定 ====================
         input.addEventListener('input', render);
-        render(); // 初始化
+        urlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') loadFromInput();
+        });
+
+        // ==================== 初始化 ====================
+        document.addEventListener('DOMContentLoaded', () => {
+            initFromURL();
+        });
     </script>
 </body>
 </html>
